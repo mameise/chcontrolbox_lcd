@@ -1,1 +1,75 @@
+name: Firmware bauen
 
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CI-Paket entpacken
+        run: |
+          ZIP=$(ls ch-controlbox-lcd-ci*.zip | sort -V | tail -1)
+          echo "Benutze $ZIP"
+          unzip -q "$ZIP" -d ci
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: ESP32 Core 3.0.7 installieren
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@3.0.7
+
+      - name: Bibliotheken in getesteten Versionen
+        run: |
+          L="$HOME/Arduino/libraries"; mkdir -p "$L"; cd "$L"
+          git clone -q --depth 1 -b 2.1.0  https://github.com/h2zero/NimBLE-Arduino
+          git clone -q --depth 1 -b v0.3.1 https://github.com/Mystfit/ESP32-BLE-CompositeHID
+          git clone -q --depth 1 -b 1.1    https://github.com/tomstewart89/Callback
+          git clone -q --depth 1 -b 1.1.16 https://github.com/lovyan03/LovyanGFX
+
+      - name: Firmware und Flash-Seite bauen
+        run: bash ci/build.sh
+
+      - name: Firmware Dateien
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: ci/dist/firmware
+
+      - name: Flash-Seite als Zip (z.B. fuer Netlify)
+        uses: actions/upload-artifact@v4
+        with:
+          name: flash-seite
+          path: ci/dist/site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ci/dist/site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
